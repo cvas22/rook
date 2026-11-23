@@ -454,16 +454,6 @@ func TestCephObjectStoreUserController(t *testing.T) {
 		req.Namespace = namespace
 		objectUser.Namespace = namespace
 	})
-
-	t.Run("users allowed in other namespace", func(t *testing.T) {
-		assert.False(t, userInNamespaceAllowed("foo", []string{}))
-		assert.False(t, userInNamespaceAllowed("foo", []string{"bar"}))
-		assert.False(t, userInNamespaceAllowed("foo", []string{"bar", "baz"}))
-		assert.True(t, userInNamespaceAllowed("foo", []string{"*"}))
-		assert.True(t, userInNamespaceAllowed("foo", []string{"bar", "*"}))
-		assert.True(t, userInNamespaceAllowed("foo", []string{"foo"}))
-		assert.True(t, userInNamespaceAllowed("foo", []string{"bar", "foo"}))
-	})
 }
 
 func TestBuildUpdateStatusInfo(t *testing.T) {

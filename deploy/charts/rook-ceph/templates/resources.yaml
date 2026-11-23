@@ -13333,6 +13333,17 @@ spec:
                   x-kubernetes-validations:
                     - message: accountID is immutable
                       rule: self == oldSelf
+                clusterNamespace:
+                  description: |-
+                    ClusterNamespace is the namespace where the parent CephCluster and CephObjectStore are found.
+                    Defaults to the namespace of the CephObjectStoreAccount. When it is a different namespace,
+                    the CephObjectStore must list the account's namespace in allowUsersInNamespaces.
+                  maxLength: 63
+                  minLength: 1
+                  type: string
+                  x-kubernetes-validations:
+                    - message: clusterNamespace is immutable
+                      rule: self == oldSelf
                 name:
                   description: Name is the desired display name of the RGW account if different from the CephObjectStoreAccount CR name.
                   maxLength: 2048

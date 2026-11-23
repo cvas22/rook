@@ -170,13 +170,16 @@ func (r *ReconcileObjectStoreAccount) reconcile(request reconcile.Request) (reco
 		return reconcile.Result{}, *cephObjectStoreAccount, nil
 	}
 
+	clusterNamespace := request.NamespacedName
+	clusterNamespace.Namespace = clusterStoreNamespace(cephObjectStoreAccount)
+
 	// The CR was just created, initializing status fields
 	if cephObjectStoreAccount.Status == nil {
 		r.updateStatus(k8sutil.ObservedGenerationNotAvailable, request.NamespacedName, k8sutil.EmptyStatus)
 	}
 
 	// Make sure a CephCluster is present otherwise do nothing
-	cephCluster, isReadyToReconcile, cephClusterExists, reconcileResponse := opcontroller.IsReadyToReconcile(r.opManagerContext, r.client, request.NamespacedName, controllerName)
+	cephCluster, isReadyToReconcile, cephClusterExists, reconcileResponse := opcontroller.IsReadyToReconcile(r.opManagerContext, r.client, clusterNamespace, controllerName)
 	if !isReadyToReconcile {
 		// This handles the case where the Ceph Cluster is gone and we want to delete that CR
 		// We skip the deleteAccount() function since everything is gone already
@@ -199,7 +202,7 @@ func (r *ReconcileObjectStoreAccount) reconcile(request reconcile.Request) (reco
 	r.cephClusterSpec = &cephCluster.Spec
 
 	// Populate clusterInfo during each reconcile
-	r.clusterInfo, _, _, err = opcontroller.LoadClusterInfo(r.context, r.opManagerContext, request.NamespacedName.Namespace, r.cephClusterSpec)
+	r.clusterInfo, _, _, err = opcontroller.LoadClusterInfo(r.context, r.opManagerContext, clusterNamespace.Namespace, r.cephClusterSpec)
 	if err != nil {
 		return reconcile.Result{}, *cephObjectStoreAccount, errors.Wrap(err, "failed to populate cluster info")
 	}
@@ -225,6 +228,14 @@ func (r *ReconcileObjectStoreAccount) reconcile(request reconcile.Request) (reco
 		return opcontroller.WaitForRequeueIfCephClusterNotReady, *cephObjectStoreAccount, err
 	}
 	r.objContext = opsCtx
+
+	// An account outside the cluster namespace needs the object store to allow its namespace
+	if clusterNamespace.Namespace != cephObjectStoreAccount.Namespace &&
+		!object.NamespaceAllowedForUsers(cephObjectStoreAccount.Namespace, objectStore.Spec.AllowUsersInNamespaces) {
+		return reconcile.Result{}, *cephObjectStoreAccount, errors.Errorf(
+			"object store %q does not allow creating accounts in namespace %q, the namespace must first be added to allowUsersInNamespaces",
+			cephObjectStoreAccount.Spec.Store, cephObjectStoreAccount.Namespace)
+	}
 
 	// DELETE: the CR was deleted
 	if !cephObjectStoreAccount.GetDeletionTimestamp().IsZero() {
@@ -266,6 +277,14 @@ func (r *ReconcileObjectStoreAccount) reconcile(request reconcile.Request) (reco
 	r.updateStatusWithAccountID(observedGeneration, request.NamespacedName, accountID, secretName)
 
 	return reconcile.Result{}, *cephObjectStoreAccount, nil
+}
+
+// clusterStoreNamespace returns the namespace where the CephCluster and CephObjectStore are expected
+func clusterStoreNamespace(account *cephv1.CephObjectStoreAccount) string {
+	if account.Spec.ClusterNamespace != "" {
+		return account.Spec.ClusterNamespace
+	}
+	return account.Namespace
 }
 
 // getAccountName returns the effective account name from the CR spec,

@@ -538,7 +538,7 @@ func (r *ReconcileObjectStoreUser) initializeObjectStoreContext(u *cephv1.CephOb
 
 	// Check if the object store allows users to be created in any namespace
 	if u.Spec.ClusterNamespace != "" && u.Spec.ClusterNamespace != u.Namespace {
-		if !userInNamespaceAllowed(u.Namespace, store.Spec.AllowUsersInNamespaces) {
+		if !object.NamespaceAllowedForUsers(u.Namespace, store.Spec.AllowUsersInNamespaces) {
 			return fmt.Errorf(
 				"object store %q does not allow creating users namespace %q, the namespace must first be added to allowUsersInNamespaces",
 				u.Spec.Store,
@@ -554,17 +554,6 @@ func (r *ReconcileObjectStoreUser) initializeObjectStoreContext(u *cephv1.CephOb
 	r.objContext = opsContext
 
 	return nil
-}
-
-func userInNamespaceAllowed(requestedNamespace string, allowedNamespaces []string) bool {
-	// Check if there is access to create the user in another namespace
-	for _, allowedNamespace := range allowedNamespaces {
-		if allowedNamespace == "*" || allowedNamespace == requestedNamespace {
-			log.NamespacedDebug(requestedNamespace, logger, "allow creating object user in namespace")
-			return true
-		}
-	}
-	return false
 }
 
 func generateUserCaps(user *admin.User) string {

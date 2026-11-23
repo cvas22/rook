@@ -3153,6 +3153,14 @@ type ObjectStoreAccountSpec struct {
 	// It is recommended to set all quotas for each account.
 	// +optional
 	Quotas AccountQuotaSpec `json:"quotas,omitzero"`
+	// ClusterNamespace is the namespace where the parent CephCluster and CephObjectStore are found.
+	// Defaults to the namespace of the CephObjectStoreAccount. When it is a different namespace,
+	// the CephObjectStore must list the account's namespace in allowUsersInNamespaces.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:XValidation:message="clusterNamespace is immutable",rule="self == oldSelf"
+	ClusterNamespace string `json:"clusterNamespace,omitempty"`
 }
 
 // AccountQuotaSpec configures the storage quotas and resource limits for an RGW account.

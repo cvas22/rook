@@ -1476,3 +1476,15 @@ func checkRGWPodsRunning(k8sClient client.Client, ctx context.Context, namespace
 func labelsForRgw(name string) map[string]string {
 	return map[string]string{"rgw": name, k8sutil.AppAttr: AppName}
 }
+
+// NamespaceAllowedForUsers returns whether allowUsersInNamespaces of an object store lets object
+// users and accounts be created in requestedNamespace
+func NamespaceAllowedForUsers(requestedNamespace string, allowedNamespaces []string) bool {
+	for _, allowedNamespace := range allowedNamespaces {
+		if allowedNamespace == "*" || allowedNamespace == requestedNamespace {
+			log.NamespacedDebug(requestedNamespace, logger, "allow creating object users and accounts in namespace")
+			return true
+		}
+	}
+	return false
+}

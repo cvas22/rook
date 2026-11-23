@@ -2394,3 +2394,13 @@ func Test_sharedPoolsExist(t *testing.T) {
 		})
 	}
 }
+
+func TestNamespaceAllowedForUsers(t *testing.T) {
+	assert.False(t, NamespaceAllowedForUsers("foo", []string{}))
+	assert.False(t, NamespaceAllowedForUsers("foo", []string{"bar"}))
+	assert.False(t, NamespaceAllowedForUsers("foo", []string{"bar", "baz"}))
+	assert.True(t, NamespaceAllowedForUsers("foo", []string{"*"}))
+	assert.True(t, NamespaceAllowedForUsers("foo", []string{"bar", "*"}))
+	assert.True(t, NamespaceAllowedForUsers("foo", []string{"foo"}))
+	assert.True(t, NamespaceAllowedForUsers("foo", []string{"bar", "foo"}))
+}

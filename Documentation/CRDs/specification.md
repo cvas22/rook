@@ -12559,6 +12559,20 @@ Accounts have several default limits. When unspecified, default limits apply.
 It is recommended to set all quotas for each account.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>clusterNamespace</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ClusterNamespace is the namespace where the parent CephCluster and CephObjectStore are found.
+Defaults to the namespace of the CephObjectStoreAccount. When it is a different namespace,
+the CephObjectStore must list the account&rsquo;s namespace in allowUsersInNamespaces.</p>
+</td>
+</tr>
 </tbody>
 </table>
 <h3 id="ceph.rook.io/v1.ObjectStoreAccountStatus">ObjectStoreAccountStatus

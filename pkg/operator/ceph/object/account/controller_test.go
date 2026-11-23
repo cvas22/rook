@@ -397,6 +397,167 @@ func TestCephObjectStoreAccountController(t *testing.T) {
 	})
 }
 
+func TestCephObjectStoreAccountInOtherNamespace(t *testing.T) {
+	ctx := t.Context()
+	const accountNamespace = "users"
+	const uid = "c1a2b3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+
+	s := scheme.Scheme
+	s.AddKnownTypes(cephv1.SchemeGroupVersion,
+		&cephv1.CephObjectStoreAccount{}, &cephv1.CephObjectStoreAccountList{},
+		&cephv1.CephCluster{}, &cephv1.CephClusterList{},
+	)
+	deterministicID, err := generateDeterministicAccountID(uid)
+	require.NoError(t, err)
+
+	newReconciler := func(t *testing.T, allowed []string) (*ReconcileObjectStoreAccount, reconcile.Request) {
+		account := &cephv1.CephObjectStoreAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       name,
+				Namespace:  accountNamespace,
+				UID:        uid,
+				Finalizers: []string{"cephobjectstoreaccount.ceph.rook.io"},
+			},
+			Spec:     cephv1.ObjectStoreAccountSpec{Store: store, ClusterNamespace: namespace},
+			TypeMeta: metav1.TypeMeta{Kind: "CephObjectStoreAccount"},
+			Status:   &cephv1.ObjectStoreAccountStatus{},
+		}
+		readyCluster := &cephv1.CephCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: namespace, Namespace: namespace},
+			Status: cephv1.ClusterStatus{
+				Phase:      k8sutil.ReadyStatus,
+				CephStatus: &cephv1.CephStatus{Health: "HEALTH_OK"},
+			},
+		}
+		cephObjectStore := &cephv1.CephObjectStore{
+			ObjectMeta: metav1.ObjectMeta{Name: store, Namespace: namespace},
+			TypeMeta:   metav1.TypeMeta{Kind: "CephObjectStore"},
+			Spec: cephv1.ObjectStoreSpec{
+				Gateway:                cephv1.GatewaySpec{Port: 80},
+				AllowUsersInNamespaces: allowed,
+			},
+			Status: &cephv1.ObjectStoreStatus{
+				Info: map[string]string{"endpoint": "http://rook-ceph-rgw-my-store.rook-ceph:80"},
+			},
+		}
+		rgwPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name:      "rook-ceph-rgw-my-store-a-5fd6fb4489-xv65v",
+			Namespace: namespace,
+			Labels:    map[string]string{k8sutil.AppAttr: cephobject.AppName, "rgw": store},
+		}}
+		cl := fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(account, readyCluster, cephObjectStore, rgwPod).Build()
+
+		c := &clusterd.Context{
+			Executor: &exectest.MockExecutor{
+				MockExecuteCommandWithOutput: func(command string, args ...string) (string, error) {
+					if args[0] == "status" {
+						return `{"fsid":"c47cac40-9bee-4d52-823b-ccd803ba5bfe","health":{"checks":{},"status":"HEALTH_OK"},"pgmap":{"num_pgs":100,"pgs_by_state":[{"state_name":"active+clean","count":100}]}}`, nil
+					}
+					return "", nil
+				},
+			},
+			RookClientset: rookclient.NewSimpleClientset(),
+			Clientset:     test.New(t, 3),
+		}
+		// The mon secret LoadClusterInfo reads lives in the cluster namespace
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-mon", Namespace: namespace},
+			Data: map[string][]byte{
+				"fsid":         []byte(name),
+				"mon-secret":   []byte("monsecret"),
+				"admin-secret": []byte("adminsecret"),
+			},
+			Type: k8sutil.RookType,
+		}
+		_, err := c.Clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		r := &ReconcileObjectStoreAccount{client: cl, scheme: s, context: c, opManagerContext: ctx, recorder: events.NewFakeRecorder(50)}
+
+		accountJSON := fmt.Sprintf(`{"id": "%s", "name": "my-account"}`, deterministicID)
+		rootUserJSON := fmt.Sprintf(`{"user_id": "%s", "display_name": "root-my-account", "account_id": "%s", "keys": [{"access_key": "ROOT_ACCESS_KEY", "secret_key": "ROOT_SECRET_KEY"}]}`, uid, deterministicID)
+		newMultisiteAdminOpsCtxFunc = func(objContext *cephobject.Context, spec *cephv1.ObjectStoreSpec) (*cephobject.AdminOpsContext, error) {
+			mockClient := &cephobject.MockClient{
+				MockDo: func(req *http.Request) (*http.Response, error) {
+					respond := func(code int, body string) (*http.Response, error) {
+						return &http.Response{StatusCode: code, Body: io.NopCloser(bytes.NewReader([]byte(body)))}, nil
+					}
+					switch {
+					case strings.HasSuffix(req.URL.Path, "/admin/account") && req.Method == http.MethodGet:
+						return respond(404, `{"Code":"NoSuchKey","RequestId":"tx000","HostId":""}`)
+					case strings.HasSuffix(req.URL.Path, "/admin/account") && req.Method == http.MethodPost:
+						return respond(200, accountJSON)
+					case strings.HasSuffix(req.URL.Path, "/admin/account") && req.Method == http.MethodPut:
+						return respond(200, `{}`)
+					case strings.HasSuffix(req.URL.Path, "/admin/user") && req.Method == http.MethodGet:
+						return respond(404, `{"Code":"NoSuchUser","RequestId":"tx000","HostId":""}`)
+					case strings.HasSuffix(req.URL.Path, "/admin/user") && req.Method == http.MethodPut:
+						return respond(200, rootUserJSON)
+					}
+					return nil, fmt.Errorf("unexpected request: %q. method %q. path %q", req.URL.RawQuery, req.Method, req.URL.Path)
+				},
+			}
+			msContext, err := cephobject.NewMultisiteContext(r.context, r.clusterInfo, cephObjectStore)
+			if err != nil {
+				return nil, err
+			}
+			adminClient, err := admin.New("rook-ceph-rgw-my-store.mycluster.svc", "53S6B9S809NUP19IJ2K3", "1bXPegzsGClvoGAiJdHQD1uOW2sQBLAZM9j9VtXR", mockClient)
+			if err != nil {
+				return nil, err
+			}
+			return &cephobject.AdminOpsContext{
+				Context:               *msContext,
+				AdminOpsUserAccessKey: "53S6B9S809NUP19IJ2K3",
+				// #nosec G101 -- fake test credential
+				AdminOpsUserSecretKey: "1bXPegzsGClvoGAiJdHQD1uOW2sQBLAZM9j9VtXR",
+				AdminOpsClient:        adminClient,
+			}, nil
+		}
+		t.Cleanup(func() { newMultisiteAdminOpsCtxFunc = cephobject.NewMultisiteAdminOpsContext })
+
+		return r, reconcile.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: accountNamespace}}
+	}
+
+	t.Run("allowed namespace", func(t *testing.T) {
+		r, req := newReconciler(t, []string{accountNamespace})
+
+		res, err := r.Reconcile(ctx, req)
+		require.NoError(t, err)
+		assert.False(t, res.Requeue)
+
+		account := &cephv1.CephObjectStoreAccount{}
+		require.NoError(t, r.client.Get(ctx, req.NamespacedName, account))
+		assert.Equal(t, k8sutil.ReadyStatus, account.Status.Phase)
+		assert.Equal(t, deterministicID, account.Status.AccountID)
+
+		// The root user secret goes next to the account, not into the cluster namespace
+		rootSecret := &corev1.Secret{}
+		err = r.client.Get(ctx, types.NamespacedName{Name: "rook-ceph-object-root-user-my-account", Namespace: accountNamespace}, rootSecret)
+		assert.NoError(t, err)
+	})
+
+	t.Run("namespace not allowed by the object store", func(t *testing.T) {
+		r, req := newReconciler(t, []string{"other"})
+
+		_, err := r.Reconcile(ctx, req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "allowUsersInNamespaces")
+
+		account := &cephv1.CephObjectStoreAccount{}
+		require.NoError(t, r.client.Get(ctx, req.NamespacedName, account))
+		assert.Equal(t, k8sutil.ReconcileFailedStatus, account.Status.Phase)
+		assert.Empty(t, account.Status.AccountID)
+	})
+}
+
+func TestClusterStoreNamespace(t *testing.T) {
+	account := &cephv1.CephObjectStoreAccount{ObjectMeta: metav1.ObjectMeta{Namespace: "users"}}
+	assert.Equal(t, "users", clusterStoreNamespace(account))
+
+	account.Spec.ClusterNamespace = "rook-ceph"
+	assert.Equal(t, "rook-ceph", clusterStoreNamespace(account))
+}
+
 func TestGetAccountName(t *testing.T) {
 	t.Run("returns spec name when set", func(t *testing.T) {
 		account := &cephv1.CephObjectStoreAccount{

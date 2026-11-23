@@ -53,6 +53,9 @@ The account is ready when the `Phase` is `Ready`.
 
 * `store`: The name of the `CephObjectStore` in which the account will be created. This field is **immutable** once set.
 * `name`: An optional display name for the RGW account if different from the CR name.
+* `clusterNamespace`: The namespace where the parent CephCluster and CephObjectStore are found. If not specified,
+    the account must be in the same namespace as the cluster and object store. To create the account in another
+    namespace, the CephObjectStore `allowUsersInNamespaces` must include the namespace of this account. This field is **immutable** once set.
 * `accountID`: An optional unique account identifier. Format must be `RGW` followed by 17 digits (e.g., `RGW00889737169837717`). If not specified, Ceph will auto-generate the account ID. This field is **immutable** once set.
 * `rootUser`: Optional configuration for the account root user.
     * `skipCreate`: When set to `true`, the root user will not be created for this account. This can be useful if the user wants to manually manage the root user outside of Rook.
